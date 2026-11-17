@@ -16,12 +16,15 @@
   .t { background: #f3deb0; border: 1px solid #b99; border-radius: 4px; width: 40px; height: 40px; display: grid; place-items: center; font-size: 22px; font-weight: bold; position: relative; }
   .t sub { position: absolute; right: 3px; bottom: 1px; font-size: 10px; font-weight: normal; }
   #board { display: grid; grid-template-columns: repeat(15, 1fr); border: 1px solid #999; }
-  #board button { aspect-ratio: 1; padding: 0; border: 1px solid #ddd; border-radius: 0; background: #f7f7f2; color: #222; font-size: min(3.8vw, 18px); font-weight: bold; }
+  #board button { position: relative; aspect-ratio: 1; padding: 0; border: 1px solid #ddd; border-radius: 0; background: #f7f7f2; color: #222; font-size: min(3.8vw, 18px); font-weight: bold; }
   #board .b { font-size: min(2.7vw, 12px); }
   #board .b3W { background: #e6d9ea; color: #8a1f9c; } #board .b2W { background: #d5def0; color: #3d5a96; }
   #board .b3L { background: #d8e5cc; color: #4d6436; } #board .b2L { background: #f1ebc4; color: #7a5a22; }
   #board .tile { background: #f3deb0; }
   #board .new { background: #ffe24d; }
+  #board .ok { background: #8fd99b; }
+  #board sub { position: absolute; right: 1px; bottom: 0; font-size: min(1.8vw, 8px); font-weight: normal; line-height: 1; }
+  #board [data-score]::after { content: attr(data-score); position: absolute; right: -8px; bottom: -8px; z-index: 1; min-width: 12px; padding: 2px 4px; border-radius: 9px; background: #1e7a34; color: #fff; font-size: 11px; line-height: 14px; }
   #board .sel { outline: 3px solid #222; outline-offset: -3px; }
   #rack .t, #board .mine { touch-action: none; user-select: none; cursor: grab; }
   #board .over { outline: 3px solid #2a7; outline-offset: -3px; }
@@ -121,15 +124,28 @@ function overlay() { // cell -> letter for the dragged tiles, the typed word or 
 function bDraw() {
   // redraw the board with any typed or previewed letters, premium-square styles, and the selected start square
   const o = overlay(), prem = { T: '3W', D: '2W', t: '3L', d: '2L' };
+  // a valid word turns the letters green and its score is displayed on the last letter like crossplay does it
+  const p = attempt(), m = typeof p === 'string' ? p : play(g.board, dict, g.rack, ...p), ok = {};
+  let last = -1;
+  if (typeof m !== 'string') for (let i = 0; i < m.word.length; i++) ok[last = at(m.d, m.line, m.start + i)] = 1;
   $('board').innerHTML = g.board.map((ch, c) => {
     const l = ch || o[c] || '', here = sel && sel.c === c, bonus = prem[PREM[c]] || '';
-    const cls = (ch ? 'tile' : o[c] ? 'tile new' + (placed[c] ? ' mine' : '') : bonus && 'b b' + bonus) + (here ? ' sel' : '');
-    return `<button data-c="${c}" class="${cls}" aria-label="row ${Math.floor(c / 15) + 1} column ${c % 15 + 1} ${l || bonus || 'empty'}">${l || (here ? (sel.d ? '↓' : '→') : bonus)}</button>`;
+    const cls = (ch ? 'tile' : o[c] ? 'tile new' + (placed[c] ? ' mine' : '') : bonus && 'b b' + bonus) + (ok[c] ? ' ok' : '') + (here ? ' sel' : '');
+    const score = c === last ? ` data-score="${m.score}"` : '', said = c === last ? `, valid play worth ${m.score}` : '';
+    return `<button data-c="${c}" class="${cls}"${score} aria-label="row ${Math.floor(c / 15) + 1} column ${c % 15 + 1} ${l || bonus || 'empty'}${said}">${l ? `${l}<sub>${VALS[l]}</sub>` : here ? (sel.d ? '↓' : '→') : bonus}</button>`;
   }).join('');
   $('bSel').textContent = sel ? `Start: row ${Math.floor(sel.c / 15) + 1}, column ${sel.c % 15 + 1}, going ${sel.d ? 'down' : 'across'}.` : '';
   let r = g.rack; // the rack minus tiles on the board or in hand
   for (const ch of [...Object.values(placed), drag && drag.ch]) if (ch) r = r.replace(ch, '');
   $('rack').innerHTML = tiles(r);
+}
+// the current attempt of making a word on the board, as [word, d, line, start]
+function attempt() {
+  if (shown) return [shown.word, shown.d, shown.line, shown.start];
+  if (Object.keys(placed).length) return spelled();
+  if (!sel) return 'drag tiles onto the board, or tap a start square and type a word';
+  const r = Math.floor(sel.c / 15), col = sel.c % 15;
+  return [clean($('bIn').value), sel.d, sel.d ? col : r, sel.d ? r : col];
 }
 // the word the dragged tiles spell, like [word, d, line, start]
 function spelled() {
@@ -173,7 +189,7 @@ function drop(ok) {
   bDraw();
 }
 $('rack').onpointerdown = e => { const t = e.target.closest('.t'); if (t) lift(e, t.firstChild.textContent, null); };
-$('board').onpointerdown = e => { const c = e.target.dataset.c; if (c != null && placed[c]) lift(e, placed[c], +c); };
+$('board').onpointerdown = e => { const c = e.target.closest('[data-c]')?.dataset.c; if (c != null && placed[c]) lift(e, placed[c], +c); };
 addEventListener('pointermove', e => drag && hover(e));
 addEventListener('pointerup', () => drop(true));
 addEventListener('pointercancel', () => drop(false));
@@ -189,7 +205,7 @@ function bNew() {
   }, 30);
 }
 $('board').onclick = e => {
-  const c = e.target.dataset.c;
+  const c = e.target.closest('[data-c]')?.dataset.c;
   if (c == null || Date.now() - dropT < 400) return;
   sel = sel && sel.c === +c ? { c: +c, d: 1 - sel.d } : { c: +c, d: 0 };
   shown = null; bDraw();
@@ -201,17 +217,7 @@ $('bList').onclick = e => {
 };
 $('bForm').onsubmit = e => {
   e.preventDefault();
-  let w, d, line, start;
-  if (Object.keys(placed).length) {
-    const p = spelled();
-    if (typeof p === 'string') return $('bMsg').textContent = `Not playable: ${p}.`;
-    [w, d, line, start] = p;
-  } else {
-    if (!sel) return $('bMsg').textContent = 'Drag tiles onto the board, or tap a start square and type a word.';
-    const r = Math.floor(sel.c / 15), col = sel.c % 15;
-    w = clean($('bIn').value); d = sel.d; line = d ? col : r; start = d ? r : col;
-  }
-  const m = play(g.board, dict, g.rack, w, d, line, start);
+  const p = attempt(), m = typeof p === 'string' ? p : play(g.board, dict, g.rack, ...p), w = p[0];
   if (typeof m === 'string') return $('bMsg').textContent = `Not playable: ${m}.`;
   const rank = g.moves.findIndex(x => x.score <= m.score) + 1;
   $('bMsg').textContent = `${w} would score ${m.score}. The best play scores ${g.moves[0].score}. Yours ranks #${rank} of ${g.moves.length}. Tap any word below to see where it would play.`;
