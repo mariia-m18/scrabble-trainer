@@ -142,7 +142,7 @@ $('board').onclick = e => {
 $('bIn').oninput = () => { shown = null; bDraw(); };
 $('bList').onclick = e => {
   const i = e.target.dataset.i;
-  if (i != null) { shown = g.moves[i]; bDraw(); $('board').scrollIntoView({ behavior: 'smooth' }); }
+  if (i != null) { shown = g.moves[i]; sel = null; bDraw(); $('board').scrollIntoView({ behavior: 'smooth' }); }
 };
 $('bForm').onsubmit = e => {
   e.preventDefault();
