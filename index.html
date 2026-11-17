@@ -78,11 +78,13 @@ let list, dict;
 let uL, uAns;
 function uNew() {
   uL = scramble(list, +$('len').value);
-  uAns = fits(list, uL).sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  // best score first, then longest
+  uAns = fits(list, uL).sort((a, b) => base(b) - base(a) || b.length - a.length || (a < b ? -1 : 1));
   $('letters').innerHTML = tiles(uL);
   $('uIn').value = $('uMsg').textContent = $('uList').innerHTML = '';
 }
-function uShow() { $('uList').innerHTML = uAns.slice(0, 30).map(w => `<li>${w}</li>`).join(''); }
+const base = w => [...w].reduce((s, c) => s + VALS[c], 0); // this calculates the base score of a word using tile values only, no board bonuses
+function uShow() { $('uList').innerHTML = uAns.slice(0, 30).map(w => `<li>${w} – ${base(w)}</li>`).join(''); }
 $('uForm').onsubmit = e => {
   e.preventDefault();
   const w = clean($('uIn').value);
