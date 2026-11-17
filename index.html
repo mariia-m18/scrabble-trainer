@@ -23,6 +23,9 @@
   #board .tile { background: #f3deb0; }
   #board .new { background: #ffe24d; }
   #board .sel { outline: 3px solid #222; outline-offset: -3px; }
+  #rack .t, #board .mine { touch-action: none; user-select: none; cursor: grab; }
+  #board .over { outline: 3px solid #2a7; outline-offset: -3px; }
+  .float { position: fixed; pointer-events: none; z-index: 9; box-shadow: 0 4px 10px #0004; }
   ol { padding-left: 28px; }
   #bList button { margin: 2px 0; }
   .hint { color: #555; font-size: 14px; }
@@ -54,12 +57,14 @@
   <section id="B" hidden>
     <div id="board"></div>
     <div id="rack" class="rack"></div>
-    <p class="hint">Tap the square where you want your word to start. Tap it again to switch the orientation across or down. Please type the whole word, including letters already on the board :)</p>
+    <p class="hint">Drag tiles from your rack onto the board, then press Play. Tap a placed tile to send it back.</p>
+    <p class="hint">Or tap the square where you want your word to start (tap again to switch across / down) and type the whole word, including letters already on the board :)</p>
     <p id="bSel" class="hint"></p>
     <form id="bForm">
       <input id="bIn" aria-label="Your word" placeholder="Your word" autocomplete="off" autocapitalize="characters" spellcheck="false">
       <button>Play</button>
     </form>
+    <button id="bClear">Return all tiles</button>
     <button id="bShow">Show best plays</button>
     <button id="bNext">New board</button>
     <p id="bMsg" aria-live="polite"></p>
@@ -98,9 +103,11 @@ $('uNext').onclick = $('len').onchange = uNew;
 
 // Board
 let g, sel = null, shown = null; // position, start square {c, d}, solution being previewed
-function overlay() { // cell -> letter for the typed word or the previewed solution
+let placed = {}, drag = null, over = null, dropT = 0; // cell -> letter, tile in hand, cell under it
+function overlay() { // cell -> letter for the dragged tiles, the typed word or the previewed solution
   const o = {};
   if (shown) for (const [c, ch] of shown.tiles) o[c] = ch;
+  else if (Object.keys(placed).length) Object.assign(o, placed);
   else if (sel) {
     let c = sel.c;
     for (const ch of clean($('bIn').value)) {
@@ -116,44 +123,101 @@ function bDraw() {
   const o = overlay(), prem = { T: '3W', D: '2W', t: '3L', d: '2L' };
   $('board').innerHTML = g.board.map((ch, c) => {
     const l = ch || o[c] || '', here = sel && sel.c === c, bonus = prem[PREM[c]] || '';
-    const cls = (ch ? 'tile' : o[c] ? 'tile new' : bonus && 'b b' + bonus) + (here ? ' sel' : '');
+    const cls = (ch ? 'tile' : o[c] ? 'tile new' + (placed[c] ? ' mine' : '') : bonus && 'b b' + bonus) + (here ? ' sel' : '');
     return `<button data-c="${c}" class="${cls}" aria-label="row ${Math.floor(c / 15) + 1} column ${c % 15 + 1} ${l || bonus || 'empty'}">${l || (here ? (sel.d ? '↓' : '→') : bonus)}</button>`;
   }).join('');
   $('bSel').textContent = sel ? `Start: row ${Math.floor(sel.c / 15) + 1}, column ${sel.c % 15 + 1}, going ${sel.d ? 'down' : 'across'}.` : '';
+  let r = g.rack; // the rack minus tiles on the board or in hand
+  for (const ch of [...Object.values(placed), drag && drag.ch]) if (ch) r = r.replace(ch, '');
+  $('rack').innerHTML = tiles(r);
 }
+// the word the dragged tiles spell, like [word, d, line, start]
+function spelled() {
+  const cs = Object.keys(placed).map(Number).sort((a, b) => a - b), row = c => Math.floor(c / 15), col = c => c % 15;
+  const has = c => g.board[c] || placed[c];
+  let d = cs.every(c => row(c) === row(cs[0])) ? 0 : cs.every(c => col(c) === col(cs[0])) ? 1 : -1;
+  if (d < 0) return 'the tiles must be in one row or column';
+  if (cs.length === 1 && !(col(cs[0]) > 0 && has(cs[0] - 1)) && !(col(cs[0]) < 14 && has(cs[0] + 1))) d = 1;
+  const line = d ? col(cs[0]) : row(cs[0]), pos = c => d ? row(c) : col(c);
+  let s = pos(cs[0]), e = pos(cs[cs.length - 1]), w = '';
+  while (s > 0 && has(at(d, line, s - 1))) s--;
+  while (e < 14 && has(at(d, line, e + 1))) e++;
+  for (let i = s; i <= e; i++) {
+    if (!has(at(d, line, i))) return 'there is a gap between your tiles';
+    w += has(at(d, line, i));
+  }
+  return w.length < 2 ? 'a word needs at least two letters' : [w, d, line, s];
+}
+// drag with pointer events, floating the letter above your finger
+// touch and mouse both still work
+function lift(e, ch, from) {
+  e.preventDefault();
+  if (from != null) delete placed[from];
+  const el = document.createElement('span');
+  el.className = 't float'; el.innerHTML = `${ch}<sub>${VALS[ch]}</sub>`;
+  document.body.append(el);
+  drag = { ch, from, el, up: e.pointerType === 'touch' ? 40 : 0 };
+  sel = shown = null; $('bIn').value = '';
+  bDraw(); hover(e);
+}
+function hover(e) {
+  const x = e.clientX, y = e.clientY - drag.up, t = document.elementFromPoint(x, y), c = t && t.closest('#board button');
+  drag.el.style.left = x - 20 + 'px'; drag.el.style.top = y - 20 + 'px';
+  if (over !== c) { if (over) over.classList.remove('over'); if (over = c) c.classList.add('over'); }
+}
+function drop(ok) {
+  if (!drag) return;
+  const c = over && +over.dataset.c;
+  if (ok && over && c !== drag.from && !g.board[c] && !placed[c]) placed[c] = drag.ch;
+  drag.el.remove(); drag = over = null; dropT = Date.now();
+  bDraw();
+}
+$('rack').onpointerdown = e => { const t = e.target.closest('.t'); if (t) lift(e, t.firstChild.textContent, null); };
+$('board').onpointerdown = e => { const c = e.target.dataset.c; if (c != null && placed[c]) lift(e, placed[c], +c); };
+addEventListener('pointermove', e => drag && hover(e));
+addEventListener('pointerup', () => drop(true));
+addEventListener('pointercancel', () => drop(false));
 function bShow() {
   $('bList').innerHTML = g.moves.slice(0, 10).map((m, i) => `<li><button data-i="${i}">${m.word} – ${m.score}</button></li>`).join('');
 }
 function bNew() {
   $('bMsg').textContent = 'Making a board';
   setTimeout(() => {
-    g = randomBoard(list, dict); sel = shown = null;
+    g = randomBoard(list, dict); sel = shown = null; placed = {};
     $('bIn').value = $('bMsg').textContent = $('bList').innerHTML = '';
-    $('rack').innerHTML = tiles(g.rack);
     bDraw();
   }, 30);
 }
 $('board').onclick = e => {
   const c = e.target.dataset.c;
-  if (c == null) return;
+  if (c == null || Date.now() - dropT < 400) return;
   sel = sel && sel.c === +c ? { c: +c, d: 1 - sel.d } : { c: +c, d: 0 };
   shown = null; bDraw();
 };
-$('bIn').oninput = () => { shown = null; bDraw(); };
+$('bIn').oninput = () => { shown = null; placed = {}; bDraw(); };
 $('bList').onclick = e => {
   const i = e.target.dataset.i;
-  if (i != null) { shown = g.moves[i]; sel = null; bDraw(); $('board').scrollIntoView({ behavior: 'smooth' }); }
+  if (i != null) { shown = g.moves[i]; sel = null; placed = {}; bDraw(); $('board').scrollIntoView({ behavior: 'smooth' }); }
 };
 $('bForm').onsubmit = e => {
   e.preventDefault();
-  if (!sel) return $('bMsg').textContent = 'Tap a start square on the board first.';
-  const w = clean($('bIn').value), r = Math.floor(sel.c / 15), col = sel.c % 15;
-  const m = play(g.board, dict, g.rack, w, sel.d, sel.d ? col : r, sel.d ? r : col);
+  let w, d, line, start;
+  if (Object.keys(placed).length) {
+    const p = spelled();
+    if (typeof p === 'string') return $('bMsg').textContent = `Not playable: ${p}.`;
+    [w, d, line, start] = p;
+  } else {
+    if (!sel) return $('bMsg').textContent = 'Drag tiles onto the board, or tap a start square and type a word.';
+    const r = Math.floor(sel.c / 15), col = sel.c % 15;
+    w = clean($('bIn').value); d = sel.d; line = d ? col : r; start = d ? r : col;
+  }
+  const m = play(g.board, dict, g.rack, w, d, line, start);
   if (typeof m === 'string') return $('bMsg').textContent = `Not playable: ${m}.`;
   const rank = g.moves.findIndex(x => x.score <= m.score) + 1;
   $('bMsg').textContent = `${w} would score ${m.score}. The best play scores ${g.moves[0].score}. Yours ranks #${rank} of ${g.moves.length}. Tap any word below to see where it would play.`;
   bShow();
 };
+$('bClear').onclick = () => { placed = {}; $('bIn').value = ''; bDraw(); };
 $('bShow').onclick = bShow;
 $('bNext').onclick = bNew;
 
